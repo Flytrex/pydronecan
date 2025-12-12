@@ -160,7 +160,7 @@ class CentralizedServer(object):
         @brief   Allocates a new node ID from the dynamic node ID range.
         @return  The allocated node ID, or None if no IDs are available.
         """
-        for node_id in range(self._dynamic_node_id_range[1], self._dynamic_node_id_range[0], -1):
+        for node_id in range(self._dynamic_node_id_range[1], self._dynamic_node_id_range[0] - 1, -1):
             if not self._allocation_table.is_known_node_id(node_id):
                 return node_id
 
