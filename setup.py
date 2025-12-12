@@ -10,6 +10,8 @@
 
 import os
 import sys
+import warnings
+
 from setuptools import setup
 from io import open
 
@@ -22,7 +24,11 @@ with open("README.md", "r", encoding = "utf-8") as fh:
 
 try:
     if not os.path.exists('dronecan/dsdl_specs'):
-        os.symlink('../../DSDL', 'dronecan/dsdl_specs')
+        try:
+            os.symlink('../../DSDL', 'dronecan/dsdl_specs')
+        except OSError:
+            pass
+
     args = dict(
         name='dronecan',
         version=__version__,
@@ -36,9 +42,7 @@ try:
             'dronecan.app',
         ],
         package_data={
-            'dronecan': [os.path.join(root[len('dronecan/'):], fname)
-                    for root, dirs, files in os.walk('dronecan/dsdl_specs', followlinks=True)
-                    for fname in files if fname.endswith('.uavcan')]
+            'dronecan': ['dronecan']
         },
         author='Pavel Kirienko, Ben Dyer',
         author_email='uavcan@googlegroups.com',
@@ -55,13 +59,16 @@ try:
         scripts = [ 'tools/dronecan_bridge.py' ]
     )
     # ensure dsdl specs are not empty
-    if  len(args['package_data']['dronecan']) == 0:
-        raise Exception('DSDL specs empty or unavailable, please ensure ../DSDL is present relative to project root')
+    if len(args['package_data']['dronecan']) == 0:
+        warnings.warn('DSDL specs empty or unavailable, please ensure ../DSDL is present relative to project root. This is unusual.')
 
     if sys.version_info[0] < 3:
         args['install_requires'] = ['monotonic']
 
     setup(**args)
 finally:
-    if os.path.islink('dronecan/dsdl_specs'):
-        os.unlink('dronecan/dsdl_specs')
+    try:
+        if os.path.islink('dronecan/dsdl_specs'):
+            os.unlink('dronecan/dsdl_specs')
+    except OSError:
+        pass
