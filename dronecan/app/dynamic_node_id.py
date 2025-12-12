@@ -244,7 +244,6 @@ class CentralizedServer(object):
                     logger.info("[CentralizedServer] Removed oldest node ID %d to free up space", removed_node_id)
                     node_allocated_id = self._allocate_new_node_id()
 
-
             if node_allocated_id:
                 self._allocation_table.set(self._query, node_allocated_id)
 
