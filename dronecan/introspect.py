@@ -10,7 +10,8 @@
 from __future__ import division, absolute_import, print_function, unicode_literals
 import os
 import dronecan
-from dronecan.transport import CompoundValue, PrimitiveValue, ArrayValue, VoidValue
+from dronecan.transport import CompoundValue, PrimitiveValue, ArrayValue, VoidValue, bytes_from_bits, le_from_be_bits, bits_from_bytes
+from dronecan.dsdl.parser import PrimitiveType as DsdlPrimitiveType
 try:
     from io import StringIO
 except ImportError:
@@ -120,10 +121,55 @@ def _to_yaml_impl(obj, indent_level=0, parent=None, name=None, dronecan_type=Non
     def indent_newline():
         buf.write(os.linesep + ' ' * 2 * indent_level)
 
-    # Decomposing PrimitiveValue to value and type. This is ugly but it's by design...
+    # Helper to compute hex bytes for a primitive value given its DSDL type
+    def _compute_primitive_hex(val, dtype):
+        try:
+            if not dtype or getattr(dtype, 'category', None) != dtype.CATEGORY_PRIMITIVE:
+                return None
+            n = getattr(dtype, 'bitlen', 0) or 0
+            if n <= 0:
+                return None
+            # Floats: pack as big-endian IEEE then convert to LE-bit order
+            if getattr(dtype, 'kind', None) == DsdlPrimitiveType.KIND_FLOAT:
+                import struct
+                fmt = {16: '>e', 32: '>f', 64: '>d'}[n]
+                be_bytes = struct.pack(fmt, float(val))
+                s_be = bits_from_bytes(be_bytes)
+            elif dtype.kind == DsdlPrimitiveType.KIND_BOOLEAN:
+                s_be = '1' if bool(val) else '0'
+            else:
+                # Integers: two's complement for signed, zero-extend for unsigned
+                iv = int(val)
+                if dtype.kind == DsdlPrimitiveType.KIND_SIGNED_INT and iv < 0:
+                    iv = (1 << n) + iv
+                mask = (1 << n) - 1 if n < 64 else (1 << n) - 1
+                iv &= mask
+                s_be = format(iv, '0%db' % n)
+            s_le = le_from_be_bits(s_be, n)
+            bb = bytes_from_bits(s_le)
+            return ' '.join('%02X' % x for x in bb)
+        except Exception:
+            return None
+
+    # Decomposing PrimitiveValue to value and type. Keep access to raw bits for hex rendering.
+    primitive_hex_bytes = None
     if isinstance(obj, PrimitiveValue):
         dronecan_type = dronecan.get_dronecan_data_type(obj)
+        # Compute hex bytes representing this primitive's bits packed to full bytes
+        try:
+            if hasattr(obj, '_bits') and dronecan_type and getattr(dronecan_type, 'bitlen', 0):
+                bits_le = le_from_be_bits(obj._bits, dronecan_type.bitlen)
+                bb = bytes_from_bits(bits_le)
+                primitive_hex_bytes = ' '.join('%02X' % x for x in bytearray(bb))
+        except Exception:
+            primitive_hex_bytes = None
         obj = obj.value
+
+    # If not a PrimitiveValue (e.g., primitive element of an array), try to compute hex using the provided type
+    if primitive_hex_bytes is None and dronecan_type is not None and \
+            getattr(dronecan_type, 'category', None) == dronecan_type.CATEGORY_PRIMITIVE and \
+            isinstance(obj, (int, float, bool)):
+        primitive_hex_bytes = _compute_primitive_hex(obj, dronecan_type)
 
     # CompoundValue
     if isinstance(obj, CompoundValue):
@@ -180,10 +226,16 @@ def _to_yaml_impl(obj, indent_level=0, parent=None, name=None, dronecan_type=Non
             64: '%.9f',
         }[dronecan_type.bitlen]
         write(float_fmt, obj)
+        if primitive_hex_bytes:
+            write(' (%s)', primitive_hex_bytes)
     elif isinstance(obj, bool):
         write('%s', 'true' if obj else 'false')
+        if primitive_hex_bytes:
+            write(' (%s)', primitive_hex_bytes)
     elif isinstance(obj, int):
         write('%s', obj)
+        if primitive_hex_bytes:
+            write(' (%s)', primitive_hex_bytes)
         if parent is not None and name is not None:
             resolved_name = value_to_constant_name(parent, name)
             if isinstance(resolved_name, str):
