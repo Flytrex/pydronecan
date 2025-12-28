@@ -192,8 +192,23 @@ class HandlerDispatcher(object):
         self._handlers = list(filter(lambda x: x[0] != dronecan_type, self._handlers))
 
     def call_handlers(self, transfer):
+        # DEBUG: Check if we have any handlers and valid payload
+        payload_type = get_dronecan_data_type(transfer.payload)
+        # print(f"DISPATCH: PayloadType={payload_type} Handlers={len(self._handlers)}")
+        
+        found = False
         for dronecan_type, wrapper, _ in self._handlers:
-            if dronecan_type is None or dronecan_type == get_dronecan_data_type(transfer.payload):
+            match = False
+            if dronecan_type is None:
+                match = True
+            elif dronecan_type == payload_type:
+                match = True
+            elif hasattr(dronecan_type, 'default_dtid') and \
+                 dronecan_type.default_dtid == transfer.data_type_id:
+                # Fallback: Match by ID if classes differ (fixes PyInstaller DSDL split-brain)
+                match = True
+            
+            if match:
                 try:
                     wrapper(transfer)
                 # noinspection PyBroadException
@@ -201,6 +216,7 @@ class HandlerDispatcher(object):
                     logger.error('Transfer handler exception', exc_info=True)
                     if not self._catch_exceptions:
                         raise e
+
 
     def is_response_sniffing_enabled(self, transfer):
         if not transfer.service_not_message:
@@ -320,17 +336,27 @@ class Node(Scheduler):
         return self._can_driver
 
     def _recv_frame(self, raw_frame):
+        # DEBUG TRACE
+        #print(f"NODE RX RAW: ID={raw_frame.id:x} EXT={raw_frame.extended} TS={raw_frame.ts_monotonic}")
+
         if not raw_frame.extended:
+            print("  -> DROP: Not extended")
             return
 
         frame = transport.Frame(raw_frame.id, raw_frame.data, raw_frame.ts_monotonic, raw_frame.ts_real, raw_frame.canfd)
 
         transfer_frames = self._transfer_manager.receive_frame(frame)
         if not transfer_frames:
+            # print("  -> Incomplete transfer") # Reduce spam
             return
+        
+       # print(f"  -> TRANSFER ASSEMBLED! Frames: {len(transfer_frames)}")
 
         transfer = transport.Transfer()
         transfer.from_frames(transfer_frames)
+        
+        # DEBUG: Inspect the assembled transfer
+       # print(f"NODE TXFR: DTID={transfer.data_type_id} Src={transfer.source_node_id} Dest={transfer.dest_node_id} SVC={transfer.service_not_message} REQ={transfer.request_not_response}")
 
         self._transfer_hook_dispatcher.call_hooks(self._transfer_hook_dispatcher.TRANSFER_DIRECTION_INCOMING, transfer)
 
@@ -418,16 +444,13 @@ class Node(Scheduler):
         count = 0
         if timeout != 0:
             deadline = (time.monotonic() + timeout) if timeout is not None else sys.float_info.max
-
             def execute_once():
                 next_event_at = self._poll_scheduler_and_get_next_deadline()
                 if next_event_at is None:
                     next_event_at = sys.float_info.max
-
                 read_timeout = min(next_event_at, deadline) - time.monotonic()
                 read_timeout = max(read_timeout, 0)
                 read_timeout = min(read_timeout, 1)
-
                 frame = self._can_driver.receive(read_timeout)
                 if frame:
                     self._recv_frame(frame)

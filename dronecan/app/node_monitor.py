@@ -29,7 +29,7 @@ class NodeMonitor(object):
             self.info = None
             self.monotonic_timestamp = None
             self._remaining_retries = NodeMonitor.MAX_RETRIES
-            self._info_requested_at = 0
+            self._info_requested_at = 0 # Fix AttributeError crash
 
         @property
         def discovered(self):
@@ -49,7 +49,12 @@ class NodeMonitor(object):
             self._remaining_retries = NodeMonitor.MAX_RETRIES
             self.monotonic_timestamp = e.transfer.ts_monotonic
             self.node_id = e.transfer.source_node_id
-            self.status = e.response.status
+            try:
+                self.status = e.response.status
+            except AttributeError:
+                 # Fallback for split-brain DSDL objects
+                 print("NodeMonitor: Warning - Missing status in GetNodeInfo response")
+                 pass
             self.info = e.response
 
         def _register_retry(self):

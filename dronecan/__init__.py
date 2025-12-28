@@ -149,13 +149,9 @@ def load_dsdl(*paths, **args):
     # noinspection PyBroadException
     try:
         if not args.get("exclude_dist", None):
-            try:
-                dsdl_path = str(get_resource_path(__name__, "dsdl_specs"))
-            except (ImportError, FileNotFoundError):
-                dsdl_path = None
-                
-            # Check if we are a package, if not directly use relative DSDL path
-            if not dsdl_path or not os.path.exists(dsdl_path):
+            dsdl_path = pkg_resources.resource_filename(__name__,"")  # @UndefinedVariable
+            # check if we are a package, if not directly use relative DSDL path
+            if not os.path.exists(dsdl_path):
                 DSDL_paths = [ "../../DSDL", "../../../../../DroneCAN/DSDL", "../../../../dsdl"]
                 for p in DSDL_paths:
                     dpath = os.path.join(os.path.dirname(__file__), p)
@@ -250,7 +246,7 @@ if custom_dsdl_env and os.path.exists(custom_dsdl_env):
 else:
     # Use the same default path logic as main.py
     default_dsdl_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    default_dsdl_path = os.path.join(default_dsdl_root, "..", "public_regulated_data_types")
+    default_dsdl_path = os.path.join(default_dsdl_root, "public_regulated_data_types")
     if os.path.exists(default_dsdl_path):
         logger.info(f"Loading default DSDL from {default_dsdl_path}")
         namespace_dirs = [

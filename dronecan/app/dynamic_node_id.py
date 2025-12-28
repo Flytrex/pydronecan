@@ -118,37 +118,35 @@ class CentralizedServer(object):
         self._node_monitor = node_monitor
         self._new_found_node_callback = new_found_node_callback
         self._node_disconnected_callback = node_disconnected_callback
-
         self._allocation_table = CentralizedServer.AllocationTable(database_storage or self.DATABASE_STORAGE_MEMORY)
         self._query = bytes()
         self._query_timestamp = 0
         self._node_monitor_event_handle = node_monitor.add_update_handler(self._handle_monitor_event)
-
         self._dynamic_node_id_range = dynamic_node_id_range or CentralizedServer.DEFAULT_NODE_ID_RANGE
         self._handle = node.add_handler(uavcan.protocol.dynamic_node_id.Allocation,  # @UndefinedVariable
                                         self._on_allocation_message)
-
         self._allocation_table.set(node.node_info.hardware_version.unique_id.to_bytes(), node.node_id)
-
         # Initializing the table
         for entry in node_monitor.find_all(lambda _: True):
-            unique_id = entry.info.hardware_version.unique_id.to_bytes() if entry.info else None
+            unique_id = None
+            if entry.info:
+                try:
+                    unique_id = entry.info.hardware_version.unique_id.to_bytes()
+                except AttributeError:
+                    pass
             self._allocation_table.set(unique_id, entry.node_id)
 
     def get_allocation_table(self):
         return self._allocation_table.get_entries()
 
     def _handle_monitor_event(self, event):
-        if event.event_id not in (event.EVENT_ID_NEW, event.EVENT_ID_INFO_UPDATE):
-            return # don't care about nodes going offline or other such things
-        # unique ID might not be available if we see a node not participating in
-        # DNA and haven't got it or it didn't share that
-        unique_id = event.entry.info.hardware_version.unique_id.to_bytes() if event.entry.info else None
-        # set unique ID for this node ID (possibly to None in case we never get
-        # one) if we don't have one yet (though maybe we should raise a
-        # conflict if we do)
-        if self._allocation_table.get_unique_id(event.entry.node_id) is None:
-            self._allocation_table.set(unique_id, event.entry.node_id)
+        unique_id = None
+        if event.entry.info:
+            try:
+                unique_id = event.entry.info.hardware_version.unique_id.to_bytes()
+            except AttributeError:
+                pass
+        self._allocation_table.set(unique_id, event.entry.node_id)
 
         if event.event_id == event.EVENT_ID_OFFLINE:
             if self._allocation_table.is_known_node_id(event.entry.node_id):
@@ -175,14 +173,17 @@ class CentralizedServer(object):
 
     def _on_allocation_message(self, e):
         # TODO: request validation
+        print(f"ALLOC HANDLER: UIDLen={len(e.message.unique_id)} 1stPhase={e.message.first_part_of_unique_id}")
 
         # Centralized allocator cannot co-exist with other allocators; this is a network configuration error.
         if e.transfer.source_node_id != 0:
+            print(f"ALLOC: Ignored - Source not 0 (Src={e.transfer.source_node_id})")
             logger.warning('[CentralizedServer] Message from another allocator ignored: %r', e)
             return
 
         # We can't grant allocations as long as there are undiscovered nodes - see specification
         if not self._node_monitor.are_all_nodes_discovered():
+            print("ALLOC: Ignored - Waiting for node discovery completion")
             logger.info('[CentralizedServer] Request ignored: not all nodes are discovered')
             return
 

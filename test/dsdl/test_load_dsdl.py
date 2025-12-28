@@ -48,4 +48,4 @@ class TestLoadDsdl(unittest.TestCase):
         '''
         ns0_dir = '{}/fake_dsdl/ns0_base/ns0'.format(os.path.dirname(__file__))
         ns0_dir_with_redefinition = '{}/fake_dsdl/ns0_duplicated/ns0'.format(os.path.dirname(__file__))
-        load_dsdl(ns0_dir, ns0_dir_with_redefinition, exclude_dist=True)
+        rns0_dir, ns0_dir_with_redefinition, exclude_dist=True)
