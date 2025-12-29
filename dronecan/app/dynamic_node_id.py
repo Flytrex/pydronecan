@@ -173,17 +173,14 @@ class CentralizedServer(object):
 
     def _on_allocation_message(self, e):
         # TODO: request validation
-        print(f"ALLOC HANDLER: UIDLen={len(e.message.unique_id)} 1stPhase={e.message.first_part_of_unique_id}")
 
         # Centralized allocator cannot co-exist with other allocators; this is a network configuration error.
         if e.transfer.source_node_id != 0:
-            print(f"ALLOC: Ignored - Source not 0 (Src={e.transfer.source_node_id})")
             logger.warning('[CentralizedServer] Message from another allocator ignored: %r', e)
             return
 
         # We can't grant allocations as long as there are undiscovered nodes - see specification
         if not self._node_monitor.are_all_nodes_discovered():
-            print("ALLOC: Ignored - Waiting for node discovery completion")
             logger.info('[CentralizedServer] Request ignored: not all nodes are discovered')
             return
 
