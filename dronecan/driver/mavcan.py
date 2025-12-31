@@ -171,8 +171,7 @@ def io_process(url, bus, target_system, baudrate, tx_queue, rx_queue, exit_queue
                 enable_can_forward()
 
         try:
-            # BROADEN FILTER: Listen for ALL messages to debug what's coming in
-            m = conn.recv_match(blocking=True, timeout=0.005)
+            m = conn.recv_match(type=['CAN_FRAME','CANFD_FRAME'],blocking=True,timeout=0.005)
         except Exception as ex:
             reconnect()
             continue
@@ -184,20 +183,13 @@ def io_process(url, bus, target_system, baudrate, tx_queue, rx_queue, exit_queue
                 last_loss_print_t = now
                 print("MAVLink packet loss %.2f%%" % conn.packet_loss())
             continue
-        
-        msg_type = m.get_type()
-
-        if msg_type not in ['CAN_FRAME', 'CANFD_FRAME']:
-            continue
-
         if target_system == 0:
             target_system = m.get_srcSystem()
         is_extended = (m.id & (1<<31)) != 0
-        is_canfd = msg_type == 'CANFD_FRAME'
+        is_canfd = m.get_type() == 'CANFD_FRAME'
         canid = m.id & 0x1FFFFFFF
         frame = CANFrame(canid, m.data[:m.len], is_extended, canfd=is_canfd)
         rx_queue.put_nowait(frame)
-        #print(f"CAN RX forwarded: {canid:x}")
 
 
 # MAVLink CAN driver
@@ -303,3 +295,4 @@ class MAVCAN(AbstractDriver):
         '''set MAVLink2 signing passphrase'''
         signing_key = self.passphrase_to_key(passphrase)
         self.tx_queue.put_nowait(ControlMessage('SigningKey', signing_key))
+        
