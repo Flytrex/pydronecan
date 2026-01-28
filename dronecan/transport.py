@@ -389,11 +389,9 @@ class ArrayValue(BaseValue, MutableSequence):
             return list(self) == other
 
     def clear(self):
-        try:
-            while True:
-                self.pop()
-        except IndexError:
-            pass
+        # Avoid relying on IndexError for loop termination (debuggers may break on it).
+        # This works for both static and dynamic arrays because __delitem__ supports slices.
+        del self[:]
 
     def new_item(self):
         return self.__item_ctor()

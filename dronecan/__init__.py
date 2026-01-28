@@ -169,7 +169,8 @@ def load_dsdl(*paths, **args):
                      os.path.join(dsdl_path, "dronecan"),
                      os.path.join(dsdl_path, "ardupilot"),
                      os.path.join(dsdl_path, "com"),
-                     os.path.join(dsdl_path, "cuav")] + paths
+                     os.path.join(dsdl_path, "cuav"),
+                     os.path.join(dsdl_path, "flytrex")] + paths
             custom_path = os.path.join(os.path.expanduser("~"), "uavcan_vendor_specific_types")
             if os.path.isdir(custom_path):
                 paths += [f for f in [os.path.join(custom_path, f) for f in os.listdir(custom_path)]
@@ -211,7 +212,7 @@ def load_dsdl(*paths, **args):
             dtype.Request = create_instance_closure(dtype, _mode='request')
             dtype.Response = create_instance_closure(dtype, _mode='response')
 
-    toplevel = ['dronecan', 'uavcan', 'ardupilot', 'com', 'cuav']
+    toplevel = ['dronecan', 'uavcan', 'ardupilot', 'com', 'cuav', 'flytrex']
     for n in toplevel:
         namespace = root_namespace._path(n)
         MODULE.__dict__[n] = Namespace()
@@ -259,6 +260,7 @@ else:
             os.path.join(default_dsdl_path, "ardupilot"),
             os.path.join(default_dsdl_path, "com"),
             os.path.join(default_dsdl_path, "cuav"),
+            os.path.join(default_dsdl_path, "flytrex"),
         ]
         load_dsdl(*namespace_dirs)
     else:
