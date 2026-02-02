@@ -37,6 +37,18 @@ class ControlMessage(object):
 def io_process(url, bus, target_system, baudrate, tx_queue, rx_queue, exit_queue, parent_pid):
     os.environ['MAVLINK20'] = '1'
 
+    # If the parent process dies unexpectedly, stop this IO process to avoid leaving a stale
+    # MAVLink connection running that can interfere with new instances.
+    parent_sentinel = None
+    mp_wait = None
+    try:
+        parent = multiprocessing.parent_process()
+        if parent is not None:
+            parent_sentinel = parent.sentinel
+        from multiprocessing.connection import wait as mp_wait  # type: ignore
+    except Exception:
+        parent_sentinel = None
+        mp_wait = None
     target_component = 0
     last_enable = time.time()
     conn = None
@@ -124,13 +136,24 @@ def io_process(url, bus, target_system, baudrate, tx_queue, rx_queue, exit_queue
     enable_can_forward()
 
     while True:
+        try:
+            if mp_wait is not None and parent_sentinel is not None and mp_wait([parent_sentinel], timeout=0):
+                # Parent process is gone.
+                conn.close()
+                return
+        except Exception:
+            pass
         if (not exit_queue.empty() and exit_queue.get() == "QUIT") or exit_proc:
             conn.close()
             return
-        if os.getppid() != parent_pid:
-            # ensure we die when parent dies
-            conn.close()
-            return
+        # Keep the old PID check only as a last-resort fallback on POSIX.
+        if mp_wait is None and os.name != 'nt':
+            try:
+                if os.getppid() != parent_pid:
+                    conn.close()
+                    return
+            except Exception:
+                pass
         while not tx_queue.empty():
             if (not exit_queue.empty() and exit_queue.get() == "QUIT") or exit_proc:
                 conn.close()
