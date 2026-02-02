@@ -169,8 +169,7 @@ def load_dsdl(*paths, **args):
                      os.path.join(dsdl_path, "dronecan"),
                      os.path.join(dsdl_path, "ardupilot"),
                      os.path.join(dsdl_path, "com"),
-                     os.path.join(dsdl_path, "cuav"),
-                     os.path.join(dsdl_path, "flytrex")] + paths
+                     os.path.join(dsdl_path, "cuav")] + paths
             custom_path = os.path.join(os.path.expanduser("~"), "uavcan_vendor_specific_types")
             if os.path.isdir(custom_path):
                 paths += [f for f in [os.path.join(custom_path, f) for f in os.listdir(custom_path)]
