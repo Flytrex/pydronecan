@@ -51,7 +51,7 @@ def io_process(url, bus, target_system, baudrate, tx_queue, rx_queue, exit_queue
         parent = multiprocessing.parent_process() if has_parent_process_api else None
         if parent is not None:
             parent_sentinel = parent.sentinel
-        from multiprocessing.connection import wait as mp_wait  # type: ignore
+            from multiprocessing.connection import wait as mp_wait  # type: ignore
     except Exception:
         parent_sentinel = None
         mp_wait = None
@@ -159,7 +159,7 @@ def io_process(url, bus, target_system, baudrate, tx_queue, rx_queue, exit_queue
         # On Windows with Python < 3.8, parent_process() is unavailable and
         # this fallback is intentionally disabled, so parent death detection
         # is effectively unavailable.
-        if mp_wait is None and os.name != 'nt':
+        if parent_sentinel is None and os.name != 'nt':
             try:
                 if os.getppid() != parent_pid:
                     conn.close()
