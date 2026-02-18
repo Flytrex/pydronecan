@@ -5,6 +5,11 @@
 #
 '''
  driver for CAN over MAVLink, using MAV_CMD_CAN_FORWARD and CAN_FRAME messages
+
+ Parent process death detection is most reliable on Python 3.8+ because
+ multiprocessing.parent_process() is used when available. On Windows with
+ Python 3.7, this API is unavailable and os.getppid() is not used as fallback,
+ so parent death detection is effectively disabled.
 '''
 
 import os
@@ -41,8 +46,9 @@ def io_process(url, bus, target_system, baudrate, tx_queue, rx_queue, exit_queue
     # MAVLink connection running that can interfere with new instances.
     parent_sentinel = None
     mp_wait = None
+    has_parent_process_api = hasattr(multiprocessing, 'parent_process')
     try:
-        parent = multiprocessing.parent_process()
+        parent = multiprocessing.parent_process() if has_parent_process_api else None
         if parent is not None:
             parent_sentinel = parent.sentinel
         from multiprocessing.connection import wait as mp_wait  # type: ignore
@@ -135,6 +141,9 @@ def io_process(url, bus, target_system, baudrate, tx_queue, rx_queue, exit_queue
     connect()
     enable_can_forward()
 
+    if os.name == 'nt' and not has_parent_process_api:
+        logger.warning('Python 3.8+ is recommended on Windows for parent process death detection in MAVCAN IO process')
+
     while True:
         try:
             if mp_wait is not None and parent_sentinel is not None and mp_wait([parent_sentinel], timeout=0):
@@ -147,6 +156,9 @@ def io_process(url, bus, target_system, baudrate, tx_queue, rx_queue, exit_queue
             conn.close()
             return
         # Keep the old PID check only as a last-resort fallback on POSIX.
+        # On Windows with Python < 3.8, parent_process() is unavailable and
+        # this fallback is intentionally disabled, so parent death detection
+        # is effectively unavailable.
         if mp_wait is None and os.name != 'nt':
             try:
                 if os.getppid() != parent_pid:
