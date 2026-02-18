@@ -27,7 +27,7 @@ try:
     except ImportError:
         # Fall back to importlib_resources backport for Python < 3.7
         import importlib_resources
-    
+
     def get_resource_path(package, resource):
         """Get path to a resource file using importlib.resources"""
         try:
@@ -40,7 +40,7 @@ try:
 except ImportError:
     # Last resort fallback to pkg_resources
     import pkg_resources
-    
+
     def get_resource_path(package, resource):
         """Get path to a resource file using pkg_resources"""
         return pkg_resources.resource_filename(package, resource)
@@ -153,7 +153,7 @@ def load_dsdl(*paths, **args):
                 dsdl_path = str(get_resource_path(__name__, "dsdl_specs"))
             except (ImportError, FileNotFoundError):
                 dsdl_path = None
-                
+
             # Check if we are a package, if not directly use relative DSDL path
             if not dsdl_path or not os.path.exists(dsdl_path):
                 DSDL_paths = [ "../../DSDL", "../../../../../DroneCAN/DSDL", "../../../../dsdl"]
@@ -169,7 +169,8 @@ def load_dsdl(*paths, **args):
                      os.path.join(dsdl_path, "dronecan"),
                      os.path.join(dsdl_path, "ardupilot"),
                      os.path.join(dsdl_path, "com"),
-                     os.path.join(dsdl_path, "cuav")] + paths
+                     os.path.join(dsdl_path, "cuav"),
+                     os.path.join(dsdl_path, "flytrex")] + paths
             custom_path = os.path.join(os.path.expanduser("~"), "uavcan_vendor_specific_types")
             if os.path.isdir(custom_path):
                 paths += [f for f in [os.path.join(custom_path, f) for f in os.listdir(custom_path)]
