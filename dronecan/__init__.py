@@ -250,17 +250,20 @@ if custom_dsdl_env and os.path.exists(custom_dsdl_env):
 
 else:
     # Use the same default path logic as main.py
-    default_dsdl_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    default_dsdl_path = os.path.join(default_dsdl_root, "..", "public_regulated_data_types")
+    if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
+        # PyInstaller onefile: public_regulated_data_types is bundled inside _MEIPASS.
+        # The __file__-relative path walks outside _MEIPASS (wrong), so use _MEIPASS directly.
+        default_dsdl_path = os.path.join(sys._MEIPASS, "public_regulated_data_types")
+    else:
+        default_dsdl_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        default_dsdl_path = os.path.join(default_dsdl_root, "..", "public_regulated_data_types")
     if os.path.exists(default_dsdl_path):
         logger.info(f"Loading default DSDL from {default_dsdl_path}")
+        _all_namespaces = ["uavcan", "dronecan", "ardupilot", "com", "cuav", "flytrex", "mppt"]
         namespace_dirs = [
-            os.path.join(default_dsdl_path, "uavcan"),
-            os.path.join(default_dsdl_path, "dronecan"),
-            os.path.join(default_dsdl_path, "ardupilot"),
-            os.path.join(default_dsdl_path, "com"),
-            os.path.join(default_dsdl_path, "cuav"),
-            os.path.join(default_dsdl_path, "flytrex"),
+            os.path.join(default_dsdl_path, ns)
+            for ns in _all_namespaces
+            if os.path.isdir(os.path.join(default_dsdl_path, ns))
         ]
         load_dsdl(*namespace_dirs)
     else:
