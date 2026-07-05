@@ -89,12 +89,16 @@ class NodeMonitor(object):
                 pass
 
     def __init__(self, node):
+        self._local_node_id = getattr(node, 'node_id', None)
         self._update_callbacks = []
         self._handle = node.add_handler(uavcan.protocol.NodeStatus, self._on_node_status)  # @UndefinedVariable
-        self._info_handle = node.add_handler(uavcan.protocol.GetNodeInfo, self._on_info_response, sniff_response=True)  # @UndefinedVariable
+        # self._info_handle = node.add_handler(uavcan.protocol.GetNodeInfo, self._on_info_response, sniff_response=True)  # @UndefinedVariable
+        # Intentionally avoid sniffing all responses globally; only track responses to our own requests.
+        self._info_handle = node.add_handler(uavcan.protocol.GetNodeInfo, self._on_info_response)  # @UndefinedVariable
         self._registry = {}  # {node_id: Entry}
         self._timer = node.periodic(1, self._remove_stale)
         self._enabled = True
+        self._discovery_enabled = True
 
     @property
     def enabled(self):
@@ -102,6 +106,13 @@ class NodeMonitor(object):
 
     def set_enabled(self, enabled):
         self._enabled = bool(enabled)
+
+    @property
+    def discovery_enabled(self):
+        return self._discovery_enabled
+
+    def set_discovery_enabled(self, enabled):
+        self._discovery_enabled = bool(enabled)
 
     def add_update_handler(self, callback):
         """
@@ -190,7 +201,7 @@ class NodeMonitor(object):
         if new_entry:
             self._call_event_handlers(self.UpdateEvent(entry, self.UpdateEvent.EVENT_ID_NEW))
 
-        if not entry.discovered and not e.node.is_anonymous:
+        if self._discovery_enabled and (not entry.discovered) and (not e.node.is_anonymous):
             should_retry_now = entry.monotonic_timestamp - entry._info_requested_at > self.MIN_RETRY_INTERVAL
             if should_retry_now:
                 entry._info_requested_at = entry.monotonic_timestamp
@@ -204,6 +215,12 @@ class NodeMonitor(object):
             return
 
         if not e:
+            return
+
+        # We sniff all GetNodeInfo responses on the bus, but only responses
+        # addressed to this local node are relevant for this monitor instance.
+        dest_node_id = getattr(e.transfer, 'dest_node_id', None)
+        if self._local_node_id is not None and dest_node_id not in (None, self._local_node_id):
             return
 
         try:
