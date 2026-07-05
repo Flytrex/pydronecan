@@ -94,6 +94,14 @@ class NodeMonitor(object):
         self._info_handle = node.add_handler(uavcan.protocol.GetNodeInfo, self._on_info_response, sniff_response=True)  # @UndefinedVariable
         self._registry = {}  # {node_id: Entry}
         self._timer = node.periodic(1, self._remove_stale)
+        self._enabled = True
+
+    @property
+    def enabled(self):
+        return self._enabled
+
+    def set_enabled(self, enabled):
+        self._enabled = bool(enabled)
 
     def add_update_handler(self, callback):
         """
@@ -151,15 +159,22 @@ class NodeMonitor(object):
     def close(self):
         """Stops the instance. The registry will not be cleared."""
         self._handle.remove()
+        self._info_handle.remove()
         self._timer.remove()
 
     def _remove_stale(self):
+        if not self._enabled:
+            return
+
         for nid, e in list(self._registry.items())[:]:
             if (e.monotonic_timestamp + self.TIMEOUT) < time.monotonic():
                 del self._registry[nid]
                 self._call_event_handlers(self.UpdateEvent(e, self.UpdateEvent.EVENT_ID_OFFLINE))
 
     def _on_node_status(self, e):
+        if not self._enabled:
+            return
+
         node_id = e.transfer.source_node_id
 
         try:
@@ -185,6 +200,9 @@ class NodeMonitor(object):
                                priority=self.TRANSFER_PRIORITY, callback=self._on_info_response)
 
     def _on_info_response(self, e):
+        if not self._enabled:
+            return
+
         if not e:
             return
 

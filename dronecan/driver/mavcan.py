@@ -34,6 +34,12 @@ TX_QUEUE_SIZE = 1000
 
 logger = getLogger(__name__)
 kill_process = False
+
+
+MAVCAN_QUEUE_LOG_THRESHOLD_SEC = 0.005
+MAVCAN_SEND_LOG_THRESHOLD_SEC = 0.005
+
+
 class ControlMessage(object):
     def __init__(self, command, data):
         self.command = command
@@ -176,6 +182,9 @@ def io_process(url, bus, target_system, baudrate, tx_queue, rx_queue, exit_queue
             if isinstance(frame, ControlMessage):
                 handle_control_message(frame)
                 continue
+            dequeue_started_at = time.monotonic()
+            enqueued_at = getattr(frame, 'tx_enqueued_at', None)
+            queue_wait_sec = (dequeue_started_at - enqueued_at) if enqueued_at is not None else None
             message_id = frame.id
             if frame.extended:
                 message_id |= 1<<31
@@ -184,6 +193,7 @@ def io_process(url, bus, target_system, baudrate, tx_queue, rx_queue, exit_queue
             if mlen < frame.MAX_DATA_LENGTH:
                 message += bytearray([0]*(frame.MAX_DATA_LENGTH-mlen))
             try:
+                send_started_at = time.monotonic()
                 if frame.canfd:
                     conn.mav.canfd_frame_send(
                         target_system,
@@ -200,6 +210,15 @@ def io_process(url, bus, target_system, baudrate, tx_queue, rx_queue, exit_queue
                         mlen,
                         message_id,
                         message)
+                send_call_sec = time.monotonic() - send_started_at
+                if ((queue_wait_sec is not None and queue_wait_sec >= MAVCAN_QUEUE_LOG_THRESHOLD_SEC) or
+                        send_call_sec >= MAVCAN_SEND_LOG_THRESHOLD_SEC):
+                    logger.info('MAVCAN.tx.timing id=0x%08x len=%d queue_ms=%s send_call_ms=%.3f canfd=%s',
+                                message_id,
+                                mlen,
+                                '%.3f' % (queue_wait_sec * 1000.0) if queue_wait_sec is not None else 'n/a',
+                                send_call_sec * 1000.0,
+                                frame.canfd)
             except Exception as ex:
                 print(ex)
             if time.time() - last_enable > 1:
@@ -281,6 +300,7 @@ class MAVCAN(AbstractDriver):
 
     def send_frame(self, frame):
         self._tx_hook(frame)
+        frame.tx_enqueued_at = time.monotonic()
         self.tx_queue.put_nowait(frame)
 
     def is_mavlink_port(device_name, baudrate):

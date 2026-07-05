@@ -30,6 +30,9 @@ DEFAULT_TRANSFER_PRIORITY = 20
 logger = getLogger(__name__)
 
 
+RESPOND_TIMING_LOG_THRESHOLD_SEC = 0.01
+
+
 class Scheduler(object):
     """This class implements a simple non-blocking event scheduler.
     It supports one-shot and periodic events.
@@ -501,6 +504,8 @@ class Node(Scheduler):
     def respond(self, payload, dest_node_id, transfer_id, priority, canfd=None):
         self._throw_if_anonymous()
 
+        started_at = time.perf_counter()
+
         if canfd is None:
             canfd = self._send_canfd
 
@@ -517,8 +522,30 @@ class Node(Scheduler):
 
         self._transfer_hook_dispatcher.call_hooks(self._transfer_hook_dispatcher.TRANSFER_DIRECTION_OUTGOING, transfer)
 
-        for frame in transfer.to_frames():
+        frames_started_at = time.perf_counter()
+        frames = transfer.to_frames()
+        frames_sec = time.perf_counter() - frames_started_at
+
+        send_started_at = time.perf_counter()
+        for frame in frames:
             self._can_driver.send(frame.message_id, frame.bytes, extended=True, canfd=canfd)
+        send_sec = time.perf_counter() - send_started_at
+
+        total_sec = time.perf_counter() - started_at
+
+        if total_sec >= RESPOND_TIMING_LOG_THRESHOLD_SEC or frames_sec >= RESPOND_TIMING_LOG_THRESHOLD_SEC:
+            logger.info(
+                'Node.respond.timing dest_node_id=%d transfer_id=%d priority=%d frames=%d '
+                'to_frames_ms=%.3f send_ms=%.3f total_ms=%.3f canfd=%s',
+                dest_node_id,
+                transfer_id,
+                priority,
+                len(frames),
+                frames_sec * 1000.0,
+                send_sec * 1000.0,
+                total_sec * 1000.0,
+                canfd,
+            )
 
         logger.debug("Node.respond(dest_node_id={0:d}, transfer_id={0:d}, priority={0:d}): sent {1!r}"
                      .format(dest_node_id, transfer_id, priority, payload))
@@ -528,7 +555,7 @@ class Node(Scheduler):
 
         if canfd is None:
             canfd = self._send_canfd
-        
+
         transfer_id = self._next_transfer_id(get_dronecan_data_type(payload).default_dtid)
         transfer = transport.Transfer(payload=payload,
                                       source_node_id=self._node_id,
