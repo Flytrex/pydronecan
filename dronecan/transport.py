@@ -350,6 +350,31 @@ class ArrayValue(BaseValue, MutableSequence):
         else:
             self.__items = []
 
+    def _is_byte_array(self):
+        return isinstance(self._type.value_type, dsdl.PrimitiveType) and \
+            self._type.value_type.kind == dsdl.PrimitiveType.KIND_UNSIGNED_INT and \
+            self._type.value_type.bitlen == 8
+
+    def _set_from_byte_values(self, value):
+        if not self._is_byte_array():
+            raise TypeError('Only uint8 arrays support byte-wise bulk assignment')
+
+        try:
+            byte_values = value.cast('B') if isinstance(value, memoryview) else memoryview(value).cast('B')
+        except (TypeError, ValueError, AttributeError):
+            byte_values = bytearray(value)
+
+        if len(byte_values) > self._type.max_size:
+            raise IndexError("Array already full (max size {0})".format(self._type.max_size))
+
+        item_ctor = self.__item_ctor
+        items = []
+        for byte in byte_values:
+            new_item = item_ctor()
+            new_item.value = byte
+            items.append(new_item)
+        self.__items = items
+
     def __repr__(self):
         return "ArrayValue(type={0!r}, items={1!r})".format(self._type, self.__items)
 
@@ -463,6 +488,10 @@ class ArrayValue(BaseValue, MutableSequence):
             return count + ''.join(i._pack(tao and last) for _, last, i in enum_mark_last(self.__items))
 
     def from_bytes(self, value):
+        if self._is_byte_array():
+            self._set_from_byte_values(value)
+            return
+
         del self[:]
         for byte in bytearray(value):
             self.append(byte)
@@ -597,11 +626,13 @@ class CompoundValue(BaseValue):
                 self._fields[attr] = copy.copy(value)
 
             elif isinstance(attr_type, dsdl.ArrayType):
-                self._fields[attr].clear()
                 try:
                     if isinstance(value, str):
                         self._fields[attr].encode(value)
+                    elif self._fields[attr]._is_byte_array() and isinstance(value, (bytes, bytearray, memoryview)):
+                        self._fields[attr].from_bytes(value)
                     else:
+                        self._fields[attr].clear()
                         for item in value:
                             self._fields[attr].append(item)
                 except Exception as ex:

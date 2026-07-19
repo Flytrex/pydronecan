@@ -31,7 +31,7 @@ def is_mavlink_port(device_name, **kwargs):
     '''check if a port is sending mavlink'''
     if not have_mavcan:
         return False
-    baudrate = kwargs.get('baudrate', 115200)
+    baudrate = kwargs.get('baudrate', 921600)
     return MAVCAN.is_mavlink_port(device_name, baudrate)
 
 def make_driver(device_name, **kwargs):

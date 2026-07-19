@@ -532,7 +532,6 @@ class Node(Scheduler):
         send_sec = time.perf_counter() - send_started_at
 
         total_sec = time.perf_counter() - started_at
-
         if total_sec >= RESPOND_TIMING_LOG_THRESHOLD_SEC or frames_sec >= RESPOND_TIMING_LOG_THRESHOLD_SEC:
             logger.info(
                 'Node.respond.timing dest_node_id=%d transfer_id=%d priority=%d frames=%d '
