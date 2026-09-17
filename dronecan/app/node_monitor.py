@@ -89,12 +89,9 @@ class NodeMonitor(object):
                 pass
 
     def __init__(self, node):
-        self._local_node_id = getattr(node, 'node_id', None)
         self._update_callbacks = []
         self._handle = node.add_handler(uavcan.protocol.NodeStatus, self._on_node_status)  # @UndefinedVariable
-        # self._info_handle = node.add_handler(uavcan.protocol.GetNodeInfo, self._on_info_response, sniff_response=True)  # @UndefinedVariable
-        # Intentionally avoid sniffing all responses globally; only track responses to our own requests.
-        self._info_handle = node.add_handler(uavcan.protocol.GetNodeInfo, self._on_info_response)  # @UndefinedVariable
+        self._info_handle = node.add_handler(uavcan.protocol.GetNodeInfo, self._on_info_response, sniff_response=True)  # @UndefinedVariable
         self._registry = {}  # {node_id: Entry}
         self._timer = node.periodic(1, self._remove_stale)
         self._enabled = True
@@ -215,12 +212,6 @@ class NodeMonitor(object):
             return
 
         if not e:
-            return
-
-        # We sniff all GetNodeInfo responses on the bus, but only responses
-        # addressed to this local node are relevant for this monitor instance.
-        dest_node_id = getattr(e.transfer, 'dest_node_id', None)
-        if self._local_node_id is not None and dest_node_id not in (None, self._local_node_id):
             return
 
         try:
