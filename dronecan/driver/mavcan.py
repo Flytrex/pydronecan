@@ -168,6 +168,7 @@ def io_process(url, bus, target_system, baudrate, tx_queue, tx_priority_queue, r
 
     while True:
         drained_count = 0
+        pending_control_message = None
         try:
             if mp_wait is not None and parent_sentinel is not None and mp_wait([parent_sentinel], timeout=0):
                 # Parent process is gone.
@@ -201,8 +202,10 @@ def io_process(url, bus, target_system, baudrate, tx_queue, tx_priority_queue, r
             if readonly:
                 continue
             if isinstance(frame, ControlMessage):
-                handle_control_message(frame)
-                continue
+                # Controls are queued separately for responsiveness, but must
+                # not overtake data already waiting in the normal FIFO queue.
+                pending_control_message = frame
+                break
             message_id = frame.id
             if frame.extended:
                 message_id |= 1<<31
@@ -276,6 +279,9 @@ def io_process(url, bus, target_system, baudrate, tx_queue, tx_priority_queue, r
                 print(ex)
             if time.time() - last_enable > 1:
                 enable_can_forward()
+
+        if pending_control_message is not None:
+            handle_control_message(pending_control_message)
 
         recv_timeout_sec = MAVCAN_RECV_TIMEOUT_BUSY_SEC if drained_count > 0 else MAVCAN_RECV_TIMEOUT_IDLE_SEC
         if recv_timeout_sec > 0.0 and (not tx_priority_queue.empty() or not tx_queue.empty()):
@@ -380,8 +386,8 @@ class MAVCAN(AbstractDriver):
         else:
             self.tx_queue.put_nowait(frame)
 
-    def is_mavlink_port(device_name, baudrate):
-        '''check if a device is sending mavlink'''
+    def detect_mavlink_baud(device_name, baudrate):
+        '''return the baudrate of a MAVLink device, or None if none is detected'''
         os.environ['MAVLINK20'] = '1'
         baud_candidates = [baudrate, MAVCAN_DEFAULT_BAUDRATE, 115200]
         seen = set()
@@ -403,7 +409,7 @@ class MAVCAN(AbstractDriver):
                     continue
                 m = conn.recv_match(blocking=True, type=['HEARTBEAT', 'ATTITUDE', 'SYS_STATUS'], timeout=1.1)
                 if m is not None:
-                    return True
+                    return baud
             except Exception:
                 continue
             finally:
@@ -413,7 +419,11 @@ class MAVCAN(AbstractDriver):
                     except Exception:
                         pass
 
-        return False
+        return None
+
+    def is_mavlink_port(device_name, baudrate):
+        '''check if a device is sending mavlink'''
+        return MAVCAN.detect_mavlink_baud(device_name, baudrate) is not None
 
     def set_filter_list(self, ids):
         '''set list of message IDs to accept, sent to the remote capture node with mavcan'''

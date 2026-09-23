@@ -504,7 +504,7 @@ class Node(Scheduler):
     def respond(self, payload, dest_node_id, transfer_id, priority, canfd=None):
         self._throw_if_anonymous()
 
-        started_at = time.perf_counter()
+        started_at = time.monotonic()
 
         if canfd is None:
             canfd = self._send_canfd
@@ -522,16 +522,16 @@ class Node(Scheduler):
 
         self._transfer_hook_dispatcher.call_hooks(self._transfer_hook_dispatcher.TRANSFER_DIRECTION_OUTGOING, transfer)
 
-        frames_started_at = time.perf_counter()
+        frames_started_at = time.monotonic()
         frames = transfer.to_frames()
-        frames_sec = time.perf_counter() - frames_started_at
+        frames_sec = time.monotonic() - frames_started_at
 
-        send_started_at = time.perf_counter()
+        send_started_at = time.monotonic()
         for frame in frames:
             self._can_driver.send(frame.message_id, frame.bytes, extended=True, canfd=canfd)
-        send_sec = time.perf_counter() - send_started_at
+        send_sec = time.monotonic() - send_started_at
 
-        total_sec = time.perf_counter() - started_at
+        total_sec = time.monotonic() - started_at
         if total_sec >= RESPOND_TIMING_LOG_THRESHOLD_SEC or frames_sec >= RESPOND_TIMING_LOG_THRESHOLD_SEC:
             logger.info(
                 'Node.respond.timing dest_node_id=%d transfer_id=%d priority=%d frames=%d '
