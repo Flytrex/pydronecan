@@ -8,11 +8,16 @@
 #
 
 import unittest
-from unittest import mock
+try:
+    from unittest import mock
+except ImportError:
+    import mock
 from dronecan import driver
-from dronecan.driver.mavcan import MAVCAN
+
+MAVCAN = getattr(driver, 'MAVCAN', None)
 
 
+@unittest.skipUnless(driver.have_mavcan, 'pymavlink is not installed')
 class TestMAVCANDetection(unittest.TestCase):
     @mock.patch('dronecan.driver.mavcan.mavutil.mavlink_connection')
     def test_detect_mavlink_baud_returns_fallback_baud(self, mavlink_connection):
@@ -27,7 +32,7 @@ class TestMAVCANDetection(unittest.TestCase):
         mavlink_connection.side_effect = open_connection
 
         self.assertEqual(115200, MAVCAN.detect_mavlink_baud('COM1', 921600))
-        self.assertEqual([921600, 115200], [call.kwargs['baud'] for call in mavlink_connection.call_args_list])
+        self.assertEqual([921600, 115200], [call[1]['baud'] for call in mavlink_connection.call_args_list])
         self.assertTrue(all(connection.close.called for connection in connections))
 
     @mock.patch('dronecan.driver.MAVCAN')
