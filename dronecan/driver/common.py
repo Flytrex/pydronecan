@@ -158,6 +158,10 @@ class AbstractDriver(object):
         '''set MAVLink2 signing passphrase'''
         pass
 
+    def set_firmware_update_mode(self, enabled):
+        '''toggle transport-level optimizations for firmware update mode'''
+        pass
+
     def stream_progress(self):
         '''stream progress of the current stream'''
         pass
