@@ -9,6 +9,7 @@
 
 from __future__ import division, absolute_import, print_function, unicode_literals
 import time
+import threading
 from logging import getLogger
 import dronecan
 from dronecan import uavcan
@@ -90,10 +91,27 @@ class NodeMonitor(object):
 
     def __init__(self, node):
         self._update_callbacks = []
+        self._registry_lock = threading.RLock()
         self._handle = node.add_handler(uavcan.protocol.NodeStatus, self._on_node_status)  # @UndefinedVariable
         self._info_handle = node.add_handler(uavcan.protocol.GetNodeInfo, self._on_info_response, sniff_response=True)  # @UndefinedVariable
         self._registry = {}  # {node_id: Entry}
         self._timer = node.periodic(1, self._remove_stale)
+        self._enabled = True
+        self._discovery_enabled = True
+
+    @property
+    def enabled(self):
+        return self._enabled
+
+    def set_enabled(self, enabled):
+        self._enabled = bool(enabled)
+
+    @property
+    def discovery_enabled(self):
+        return self._discovery_enabled
+
+    def set_discovery_enabled(self, enabled):
+        self._discovery_enabled = bool(enabled)
 
     def add_update_handler(self, callback):
         """
@@ -116,7 +134,8 @@ class NodeMonitor(object):
         Args:
             node_id:    Returns True if the given node ID exists, false otherwise
         """
-        return node_id in self._registry
+        with self._registry_lock:
+            return node_id in self._registry
 
     def get(self, node_id):
         """
@@ -124,22 +143,26 @@ class NodeMonitor(object):
             node_id:    Returns an Entry instance for the given node ID.
                         If the requested node ID does not exist, throws KeyError.
         """
-        if (self._registry[node_id].monotonic_timestamp + self.TIMEOUT) < time.monotonic():
-            self._call_event_handlers(self.UpdateEvent(self._registry[node_id],
-                                                       self.UpdateEvent.EVENT_ID_OFFLINE))
-            del self._registry[node_id]
-        return self._registry[node_id]
+        with self._registry_lock:
+            if (self._registry[node_id].monotonic_timestamp + self.TIMEOUT) < time.monotonic():
+                self._call_event_handlers(self.UpdateEvent(self._registry[node_id],
+                                                           self.UpdateEvent.EVENT_ID_OFFLINE))
+                del self._registry[node_id]
+            return self._registry[node_id]
 
     def get_all_node_id(self):
         """Returns a generator or an iterable containing all currently active node ID."""
-        return self._registry.keys()
+        with self._registry_lock:
+            return list(self._registry.keys())
 
     def find_all(self, predicate):
         """Returns a generator that produces a sequence of Entry objects for which the predicate returned True.
         Args:
             predicate:  A callable that returns a value coercible to bool.
         """
-        for _nid, entry in self._registry.items():
+        with self._registry_lock:
+            entries = list(self._registry.values())
+        for entry in entries:
             if predicate(entry):
                 yield entry
 
@@ -151,31 +174,43 @@ class NodeMonitor(object):
     def close(self):
         """Stops the instance. The registry will not be cleared."""
         self._handle.remove()
+        self._info_handle.remove()
         self._timer.remove()
 
     def _remove_stale(self):
-        for nid, e in list(self._registry.items())[:]:
-            if (e.monotonic_timestamp + self.TIMEOUT) < time.monotonic():
-                del self._registry[nid]
-                self._call_event_handlers(self.UpdateEvent(e, self.UpdateEvent.EVENT_ID_OFFLINE))
+        if not self._enabled:
+            return
+
+        with self._registry_lock:
+            stale_entries = []
+            for nid, e in list(self._registry.items()):
+                if (e.monotonic_timestamp + self.TIMEOUT) < time.monotonic():
+                    del self._registry[nid]
+                    stale_entries.append(e)
+        for entry in stale_entries:
+            self._call_event_handlers(self.UpdateEvent(entry, self.UpdateEvent.EVENT_ID_OFFLINE))
 
     def _on_node_status(self, e):
+        if not self._enabled:
+            return
+
         node_id = e.transfer.source_node_id
 
-        try:
-            entry = self.get(node_id)
-            new_entry = False
-        except KeyError:
-            entry = self.Entry()
-            self._registry[node_id] = entry
-            new_entry = True
+        with self._registry_lock:
+            try:
+                entry = self.get(node_id)
+                new_entry = False
+            except KeyError:
+                entry = self.Entry()
+                self._registry[node_id] = entry
+                new_entry = True
 
-        # noinspection PyProtectedMember
-        entry._update_from_status(e)
+            # noinspection PyProtectedMember
+            entry._update_from_status(e)
         if new_entry:
             self._call_event_handlers(self.UpdateEvent(entry, self.UpdateEvent.EVENT_ID_NEW))
 
-        if not entry.discovered and not e.node.is_anonymous:
+        if self._discovery_enabled and (not entry.discovered) and (not e.node.is_anonymous):
             should_retry_now = entry.monotonic_timestamp - entry._info_requested_at > self.MIN_RETRY_INTERVAL
             if should_retry_now:
                 entry._info_requested_at = entry.monotonic_timestamp
@@ -185,17 +220,21 @@ class NodeMonitor(object):
                                priority=self.TRANSFER_PRIORITY, callback=self._on_info_response)
 
     def _on_info_response(self, e):
+        if not self._enabled:
+            return
+
         if not e:
             return
 
-        try:
-            entry = self.get(e.transfer.source_node_id)
-        except KeyError:
-            entry = self.Entry()
-            self._registry[e.transfer.source_node_id] = entry
+        with self._registry_lock:
+            try:
+                entry = self.get(e.transfer.source_node_id)
+            except KeyError:
+                entry = self.Entry()
+                self._registry[e.transfer.source_node_id] = entry
 
-        # noinspection PyProtectedMember
-        entry._update_from_info(e)
+            # noinspection PyProtectedMember
+            entry._update_from_info(e)
 
         hw_unique_id = "".join(format(c, "02X") for c in e.response.hardware_version.unique_id)
         msg = (

@@ -614,6 +614,22 @@ class TestAssignment(unittest.TestCase):
         print(repr(self.a.name))
         print(str(self.a.name))
 
+    def test_file_read_response_wire_layout(self):
+        response = uavcan.protocol.file.Read.Response()
+        response.error.value = response.error.OK
+        response.data = bytearray([1, 2, 3])
+
+        transfer = transport.Transfer(payload=response)
+
+        self.assertEqual(list(transfer.payload), [0, 0, 1, 2, 3])
+
+        decoded = uavcan.protocol.file.Read.Response()
+        remainder = decoded._unpack(transport.bits_from_bytes(transfer.payload), tao=True)
+
+        self.assertEqual(remainder, '')
+        self.assertEqual(decoded.error.value, response.error.OK)
+        self.assertEqual(list(decoded.data), [1, 2, 3])
+
 
 class TestFloats(unittest.TestCase):
     def test_basic(self):

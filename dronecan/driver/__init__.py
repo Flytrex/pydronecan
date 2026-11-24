@@ -31,8 +31,14 @@ def is_mavlink_port(device_name, **kwargs):
     '''check if a port is sending mavlink'''
     if not have_mavcan:
         return False
-    baudrate = kwargs.get('baudrate', 115200)
+    baudrate = kwargs.get('baudrate', 921600)
     return MAVCAN.is_mavlink_port(device_name, baudrate)
+
+def _detect_mavlink_baud(device_name, **kwargs):
+    if not have_mavcan:
+        return None
+    baudrate = kwargs.get('baudrate', 921600)
+    return MAVCAN.detect_mavlink_baud(device_name, baudrate)
 
 def make_driver(device_name, **kwargs):
     """Creates an instance of CAN driver.
@@ -61,7 +67,9 @@ def make_driver(device_name, **kwargs):
         kwargs['readonly'] = False
         return file(device_name[8:], **kwargs)
     elif windows_com_port or unix_tty:
-        if is_mavlink_port(device_name, **kwargs):
+        mavlink_baudrate = _detect_mavlink_baud(device_name, **kwargs)
+        if mavlink_baudrate is not None:
+            kwargs['baudrate'] = mavlink_baudrate
             return MAVCAN(device_name, **kwargs)
         else:
             return SLCAN(device_name, **kwargs)
