@@ -15,6 +15,8 @@
 import os
 import sys
 import time
+import select
+import signal
 import multiprocessing
 from logging import getLogger
 from .common import DriverError, CANFrame, AbstractDriver
@@ -32,6 +34,7 @@ else:
     RX_QUEUE_SIZE = 1000000
 TX_QUEUE_SIZE = 1000
 TX_PRIORITY_QUEUE_SIZE = 500
+CAN_TYPES = ['CAN_FRAME', 'CANFD_FRAME']
 
 logger = getLogger(__name__)
 kill_process = False
@@ -43,12 +46,47 @@ MAVCAN_DEFAULT_BAUDRATE = 921600
 MAVCAN_HIGH_PRIORITY_MAX = 10
 
 
+def parent_process_alive(parent_pid):
+    '''check if the process that spawned us is still alive.
+
+    We can't compare os.getppid() to parent_pid: under the 'forkserver'
+    start method (the default on Linux from Python 3.14) the IO process is
+    forked from the fork-server, so getppid() returns the fork-server's pid,
+    not the bridge's. Check the recorded parent pid directly instead.'''
+    if sys.platform.startswith('win'):
+        return True             # os.kill(pid, 0) is unreliable on Windows
+    try:
+        os.kill(parent_pid, 0)
+    except OSError:
+        return False
+    return True
+
+
 class ControlMessage(object):
     def __init__(self, command, data):
         self.command = command
         self.data = data
 
+
+def tx_wait_fd(tx_queue):
+    '''fd that becomes readable when a frame is queued for transmit.
+
+    Returns None where it cannot be used, in which case the IO loop
+    falls back to waiting on the link alone. select() on Windows only
+    accepts sockets, so the link and the queue cannot be waited on
+    together there.'''
+    if sys.platform.startswith('win'):
+        return None
+    try:
+        return tx_queue._reader.fileno()
+    except Exception:
+        return None
+
 def io_process(url, bus, target_system, baudrate, tx_queue, tx_priority_queue, rx_queue, exit_queue, parent_pid):
+    # leave Ctrl-C (SIGINT) handling to the parent process; this daemon
+    # child is torn down when the parent exits
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
+
     os.environ['MAVLINK20'] = '1'
 
     if os.name == 'nt':
@@ -166,6 +204,17 @@ def io_process(url, bus, target_system, baudrate, tx_queue, tx_priority_queue, r
     if os.name == 'nt' and not has_parent_process_api:
         logger.warning('Python 3.8+ is recommended on Windows for parent process death detection in MAVCAN IO process')
 
+    # Both transmit queues are waited on together with the link (not on Windows, see tx_wait_fd)
+    tx_fd = tx_wait_fd(tx_queue)
+    tx_priority_fd = tx_wait_fd(tx_priority_queue)
+
+    def wait_set():
+        '''fds to wait on, or None to fall back to a blocking receive.
+        Recomputed each pass because reconnect() replaces conn.'''
+        if tx_fd is None or tx_priority_fd is None or conn.fd is None:
+            return None
+        return [conn.fd, tx_fd, tx_priority_fd]
+
     while True:
         drained_count = 0
         pending_control_message = None
@@ -179,17 +228,12 @@ def io_process(url, bus, target_system, baudrate, tx_queue, tx_priority_queue, r
         if (not exit_queue.empty() and exit_queue.get() == "QUIT") or exit_proc:
             conn.close()
             return
-        # Keep the old PID check only as a last-resort fallback on POSIX.
-        # On Windows with Python < 3.8, parent_process() is unavailable and
-        # this fallback is intentionally disabled, so parent death detection
-        # is effectively unavailable.
-        if parent_sentinel is None and os.name != 'nt':
-            try:
-                if os.getppid() != parent_pid:
-                    conn.close()
-                    return
-            except Exception:
-                pass
+        # Fallback when the parent sentinel is unavailable. On Windows with Python < 3.8 this is
+        # effectively disabled, since parent_process_alive() cannot check a pid there.
+        if parent_sentinel is None and not parent_process_alive(parent_pid):
+            # ensure we die when parent dies
+            conn.close()
+            return
         while True:
             if (not exit_queue.empty() and exit_queue.get() == "QUIT") or exit_proc:
                 conn.close()
@@ -286,8 +330,22 @@ def io_process(url, bus, target_system, baudrate, tx_queue, tx_priority_queue, r
         recv_timeout_sec = MAVCAN_RECV_TIMEOUT_BUSY_SEC if drained_count > 0 else MAVCAN_RECV_TIMEOUT_IDLE_SEC
         if recv_timeout_sec > 0.0 and (not tx_priority_queue.empty() or not tx_queue.empty()):
             recv_timeout_sec = MAVCAN_RECV_TIMEOUT_BUSY_SEC
+        wait_fds = wait_set()
         try:
-            m = conn.recv_match(type=['CAN_FRAME', 'CANFD_FRAME'], blocking=True, timeout=recv_timeout_sec)
+            if wait_fds is None:
+                m = conn.recv_match(type=CAN_TYPES, blocking=True, timeout=recv_timeout_sec)
+            else:
+                # Wait on the link and the transmit queues together. A
+                # blocking receive here would hold a frame queued just
+                # after the drain above until the receive times out,
+                # putting milliseconds of latency on every frame we
+                # send. Take anything already parsed first, since the
+                # link fd is not readable while a decoded message sits
+                # in the connection's own buffer.
+                m = conn.recv_match(type=CAN_TYPES, blocking=False)
+                if m is None and recv_timeout_sec > 0.0:
+                    select.select(wait_fds, [], [], recv_timeout_sec)
+                    m = conn.recv_match(type=CAN_TYPES, blocking=False)
         except Exception as ex:
             reconnect()
             continue
@@ -341,7 +399,7 @@ class MAVCAN(AbstractDriver):
             self.set_signing_passphrase(pass_phrase)
 
     def close(self):
-        if self.proc is not None:
+        if self.proc is not None and self.proc.is_alive():
             self.exit_queue.put_nowait("QUIT")
             self.proc.join()
 
