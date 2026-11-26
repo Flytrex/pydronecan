@@ -51,6 +51,12 @@ class ControlMessage(object):
 def io_process(url, bus, target_system, baudrate, tx_queue, tx_priority_queue, rx_queue, exit_queue, parent_pid):
     os.environ['MAVLINK20'] = '1'
 
+    # By default a process that has put items on a multiprocessing queue does not exit until its
+    # feeder thread has written them all into the pipe. Once the parent stops reading (it is
+    # closing), a busy bus fills the pipe and this process could never exit, hanging the parent's
+    # join() in MAVCAN.close(). Received frames nobody will read can be dropped instead.
+    rx_queue.cancel_join_thread()
+
     if os.name == 'nt':
         try:
             import ctypes
@@ -340,10 +346,24 @@ class MAVCAN(AbstractDriver):
         if pass_phrase:
             self.set_signing_passphrase(pass_phrase)
 
+    CLOSE_TIMEOUT_SEC = 2.0
+
     def close(self):
-        if self.proc is not None:
+        proc, self.proc = self.proc, None
+        if proc is None:
+            return
+        try:
             self.exit_queue.put_nowait("QUIT")
-            self.proc.join()
+        except queue.Full:
+            pass
+        proc.join(self.CLOSE_TIMEOUT_SEC)
+        if proc.is_alive():
+            logger.warning('MAVCAN IO process did not exit within %.1f s; terminating it', self.CLOSE_TIMEOUT_SEC)
+            proc.terminate()
+            proc.join(self.CLOSE_TIMEOUT_SEC)
+        # The IO process no longer reads our TX queues; don't let unsent frames block our own exit.
+        for q in (self.tx_queue, self.tx_priority_queue, self.exit_queue):
+            q.cancel_join_thread()
 
     def __del__(self):
         self.close()
